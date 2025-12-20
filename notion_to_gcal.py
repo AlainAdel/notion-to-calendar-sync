@@ -1,5 +1,19 @@
 import os
+import sys
 import json
+from datetime import timezone
+
+# Ensure importlib.metadata has packages_distributions on Python 3.8
+try:  # pragma: no cover
+    import importlib.metadata as _ilm
+    if not hasattr(_ilm, "packages_distributions"):
+        import importlib_metadata as _ilm_backport  # type: ignore
+        sys.modules["importlib.metadata"] = _ilm_backport
+except Exception:
+    pass
+
+from dotenv import load_dotenv
+load_dotenv()
 from notion_client import Client as NotionClient
 from notion_client.errors import RequestTimeoutError
 from google.oauth2.credentials import Credentials
@@ -7,12 +21,12 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
 from google.auth.exceptions import RefreshError
-from datetime import datetime, timezone
 import dateutil.parser
 
 # ---------------- CONFIG ---------------- #
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
 DATABASE_ID = os.environ.get("NOTION_DATABASE_ID")
+NOTION_VERSION = os.environ.get("NOTION_VERSION", "2022-06-28")
 
 if not NOTION_TOKEN or not DATABASE_ID:
     raise EnvironmentError(
@@ -113,14 +127,18 @@ def get_page_content(notion, page_id):
 
 
 def get_notion_events():
-    notion = NotionClient(auth=NOTION_TOKEN, timeout_ms=NOTION_TIMEOUT_MS)
+    notion = NotionClient(
+        auth=NOTION_TOKEN, timeout_ms=NOTION_TIMEOUT_MS, notion_version=NOTION_VERSION
+    )
     has_more = True
     next_cursor = None
     events = []
 
     while has_more:
-        query = notion.databases.query(
-            database_id=DATABASE_ID, start_cursor=next_cursor
+        # notion_client 2.7.0 dropped databases.query; call the endpoint directly.
+        body = {"start_cursor": next_cursor} if next_cursor else {}
+        query = notion.request(
+            path=f"databases/{DATABASE_ID}/query", method="POST", body=body
         )
         for page in query["results"]:
             props = page["properties"]
@@ -231,20 +249,6 @@ def sync_events(gcal, notion_events, synced):
                 # Compare and update if different
                 changed = False
 
-                # Compare only meaningful fields
-                # def normalize(dt_str):
-                #     """Normalize ISO date/time strings for accurate comparison (ignores milliseconds, tz suffixes)."""
-                #     if not dt_str:
-                #         return ""
-                #     dt_str = dt_str.strip().replace("Z", "+00:00")
-                #     try:
-                #         # Parse into datetime object to standardize
-                #         dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
-                #         # Convert back to canonical ISO format (without milliseconds)
-                #         return dt.replace(microsecond=0).isoformat()
-                #     except Exception:
-                #         # In case of date-only values
-                #         return dt_str
                 def normalize(dt_str):
                     """Normalize ISO date/time strings for accurate comparison (timezone-aware UTC, no microseconds)."""
                     if not dt_str:
