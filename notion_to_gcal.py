@@ -5,6 +5,7 @@ from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+from google.auth.exceptions import RefreshError
 from datetime import datetime, timezone
 import dateutil.parser
 
@@ -20,19 +21,40 @@ SYNC_FILE = "synced_events.json"
 
 # ------------- AUTH GOOGLE -------------- #
 def authenticate_google():
+    """
+    Authenticate with Google Calendar, auto-recovering from bad refresh tokens.
+    Forces a fresh login when refresh fails, and always persists the latest token.
+    """
+
     creds = None
     if os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                "credentials.json", SCOPES
-            )
-            creds = flow.run_local_server(port=0)
+
+    def save(creds_obj):
         with open("token.json", "w") as token:
-            token.write(creds.to_json())
+            token.write(creds_obj.to_json())
+
+    def new_login():
+        flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+        fresh_creds = flow.run_local_server(port=0)
+        save(fresh_creds)
+        return fresh_creds
+
+    # No token yet: do interactive login
+    if not creds:
+        return build("calendar", "v3", credentials=new_login())
+
+    # Token is already valid
+    if creds.valid:
+        return build("calendar", "v3", credentials=creds)
+
+    # Attempt refresh, fallback to new login on failure
+    try:
+        creds.refresh(Request())
+        save(creds)
+    except RefreshError:
+        creds = new_login()
+
     return build("calendar", "v3", credentials=creds)
 
 
