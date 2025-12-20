@@ -10,8 +10,14 @@ from datetime import datetime, timezone
 import dateutil.parser
 
 # ---------------- CONFIG ---------------- #
-NOTION_TOKEN = "***REMOVED***"
-DATABASE_ID = "***REMOVED***"
+NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
+DATABASE_ID = os.environ.get("NOTION_DATABASE_ID")
+
+if not NOTION_TOKEN or not DATABASE_ID:
+    raise EnvironmentError(
+        "Set NOTION_TOKEN and NOTION_DATABASE_ID environment variables."
+    )
+
 DATE_PROPERTY_NAME = "Do Date"  # Notion date field name
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
