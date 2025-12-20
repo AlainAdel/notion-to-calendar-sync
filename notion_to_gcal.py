@@ -1,6 +1,7 @@
 import os
 import json
 from notion_client import Client as NotionClient
+from notion_client.errors import RequestTimeoutError
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
@@ -23,6 +24,7 @@ DATE_PROPERTY_NAME = "Do Date"  # Notion date field name
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 CALENDAR_ID = "primary"
 SYNC_FILE = "synced_events.json"
+NOTION_TIMEOUT_MS = int(os.environ.get("NOTION_TIMEOUT_MS", "20000"))  # 20s default
 
 
 # ------------- AUTH GOOGLE -------------- #
@@ -67,39 +69,51 @@ def authenticate_google():
 # -------------- NOTION ------------------ #
 def get_page_content(notion, page_id):
     """Fetch readable text content from a Notion page (paragraphs, lists, headings, etc.)."""
+    texts = []
+    next_cursor = None
+
     try:
-        blocks = notion.blocks.children.list(block_id=page_id)
-        texts = []
+        while True:
+            # Paginate to avoid huge responses hanging the request
+            blocks = notion.blocks.children.list(
+                block_id=page_id, start_cursor=next_cursor, page_size=50
+            )
 
-        for block in blocks.get("results", []):
-            block_type = block.get("type")
-            rich_text = block.get(block_type, {}).get("rich_text", [])
+            for block in blocks.get("results", []):
+                block_type = block.get("type")
+                rich_text = block.get(block_type, {}).get("rich_text", [])
 
-            if not rich_text:
-                continue
+                if not rich_text:
+                    continue
 
-            # Join all text fragments in the block
-            text_content = "".join([t.get("plain_text", "") for t in rich_text])
+                # Join all text fragments in the block
+                text_content = "".join([t.get("plain_text", "") for t in rich_text])
 
-            # Add bullet/heading markers for readability
-            if block_type in ["bulleted_list_item", "numbered_list_item"]:
-                texts.append(f"• {text_content}")
-            elif block_type.startswith("heading_"):
-                texts.append(f"\n{text_content.upper()}\n")
-            elif block_type == "to_do":
-                checked = "✅" if block[block_type].get("checked") else "☐"
-                texts.append(f"{checked} {text_content}")
-            else:
-                texts.append(text_content)
+                # Add bullet/heading markers for readability
+                if block_type in ["bulleted_list_item", "numbered_list_item"]:
+                    texts.append(f"• {text_content}")
+                elif block_type.startswith("heading_"):
+                    texts.append(f"\n{text_content.upper()}\n")
+                elif block_type == "to_do":
+                    checked = "✅" if block[block_type].get("checked") else "☐"
+                    texts.append(f"{checked} {text_content}")
+                else:
+                    texts.append(text_content)
 
-        return "\n".join(texts).strip()
+            if not blocks.get("has_more"):
+                break
+            next_cursor = blocks.get("next_cursor")
+
+    except RequestTimeoutError:
+        print(f"⏱️ Timeout while fetching page content for {page_id}")
     except Exception as e:
         print(f"⚠️ Failed to fetch page content for {page_id}: {e}")
-        return ""
+
+    return "\n".join(texts).strip()
 
 
 def get_notion_events():
-    notion = NotionClient(auth=NOTION_TOKEN)
+    notion = NotionClient(auth=NOTION_TOKEN, timeout_ms=NOTION_TIMEOUT_MS)
     has_more = True
     next_cursor = None
     events = []
