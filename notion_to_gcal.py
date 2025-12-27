@@ -78,8 +78,7 @@ def compute_event_hash(event):
     """Compute a deterministic hash of the event data relevant for sync."""
     # Create a string representation of relevant fields
     # Use deterministic sorting for dictionary keys if any
-    data_str = f"{event['title']}|{event['start']}|{event['end']}|{event['description']}"
-    data_str = f"{event['title']}|{event['start']}|{event['end']}|{event['description']}"
+    data_str = f"v1-reminders|{event['title']}|{event['start']}|{event['end']}|{event['description']}"
     return hashlib.md5(data_str.encode("utf-8")).hexdigest()
 
 def format_uuid(id_str):
@@ -457,6 +456,7 @@ def build_event_body(event):
         "start": start,
         "end": end,
         "extendedProperties": {"private": {"source": "notion-sync"}},
+        "reminders": {"useDefault": True},
     }
 
 
